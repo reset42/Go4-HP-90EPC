@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8" />
+    <title>HP-90EPC – Live Anzeige</title>
+    <link rel="stylesheet" href="hp90epc.css" />
+</head>
+<body>
+<div class="app">
+    <header class="app-header">
+        <div class="app-title">
+            <span class="app-title-main">HP-90EPC</span>
+            <span class="app-title-sub">Live-View</span>
+        </div>
+        <div class="app-status">
+            <button type="button" class="status-pill status-pill-port status-pill-button" id="pill-port">Device: –</button>
+            <span class="status-pill status-pill-conn status-pill-warn" id="pill-conn">Keine Daten</span>
+        </div>
+    </header>
+
+    <main class="layout">
+        <!-- Hauptanzeige -->
+        <section class="card card-main">
+            <div class="card-header">
+                <h1>Live Messwert</h1>
+            </div>
+
+            <div class="reading reading--default" id="reading">
+                <span class="reading-value" id="reading-value">--.--</span>
+                <span class="reading-unit" id="reading-unit">VDC</span>
+            </div>
+
+            <div class="reading-meta" id="reading-meta">
+                <span class="tag">–</span>
+            </div>
+
+            <div class="status-row">
+                <span class="badge badge-off badge-auto">AUTO</span>
+                <span class="badge badge-off badge-hold">HOLD</span>
+                <span class="badge badge-off badge-rel">REL</span>
+                <span class="badge badge-ok badge-bat">BAT OK</span>
+            </div>
+
+            <!-- Raw als letzte Zeile (wie besprochen: Debug-Card später killen) -->
+            <div class="raw-row">
+                <span class="debug-label">Raw</span>
+                <code class="raw-hex" id="raw-hex">--</code>
+            </div>
+        </section>
+
+        <!-- Logging -->
+        <section class="card card-log">
+            <div class="card-header">
+                <div class="card-title-row">
+                    <h2>Logging</h2>
+                    <button type="button" class="btn-ghost" id="btn-log-settings" title="Logging-Einstellungen">
+                        ⚙
+                    </button>
+                </div>
+            </div>
+
+            <div class="log-status-row">
+                <span class="debug-label">Status</span>
+                <span class="status-pill status-pill-log status-pill-warn" id="log-status">gestoppt</span>
+            </div>
+
+            <div class="log-meta">
+                <span>Intervall: <strong id="log-interval">–</strong></span>
+                <span>Datei: <strong id="log-file">–</strong></span>
+            </div>
+
+            <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="btn-log-start">Logging starten</button>
+                <button type="button" class="btn btn-secondary" id="btn-log-stop" disabled>Logging stoppen</button>
+            </div>
+        </section>
+    </main>
+</div>
+
+<!-- Modal: Device -->
+<div class="modal-backdrop" id="modal-device">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Gerät verbinden</h3>
+            <button type="button" class="modal-close" data-close="modal-device">×</button>
+        </div>
+        <div class="modal-body">
+            <label class="field">
+                <span class="field-label">Port</span>
+                <input type="text" id="device-port-input" class="input" placeholder="/dev/ttyUSB0, COM3, /dev/tty.usbserial-0001" />
+                <small class="field-hint">Windows: COM3 • Linux: /dev/ttyUSB0 • macOS: /dev/tty.usbserial*</small>
+            </label>
+            <label class="field">
+                <span class="field-label">Baudrate</span>
+                <select id="device-baud-select" class="input">
+                    <option value="2400">2400</option>
+                    <option value="4800">4800</option>
+                    <option value="9600">9600</option>
+                    <option value="19200">19200</option>
+                </select>
+            </label>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-close="modal-device">Abbrechen</button>
+            <button type="button" class="btn btn-primary" id="btn-device-save">Übernehmen</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Logging -->
+<div class="modal-backdrop" id="modal-logging">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Logging</h3>
+            <button type="button" class="modal-close" data-close="modal-logging">×</button>
+        </div>
+        <div class="modal-body">
+            <label class="field">
+                <span class="field-label">Intervall</span>
+                <div class="input-inline">
+                    <input type="number" id="log-interval-input" class="input" min="50" step="50" />
+                    <span class="suffix">ms</span>
+                </div>
+            </label>
+
+            <div class="field">
+                <div class="field-label">Log-Dateien</div>
+                <div class="file-row">
+                    <select id="log-file-select" class="input"></select>
+                    <button type="button" class="btn btn-secondary" id="btn-log-refresh">↻</button>
+                </div>
+                <div class="file-actions">
+                    <button type="button" class="btn btn-secondary" id="btn-log-download">Download CSV</button>
+                    <button type="button" class="btn btn-secondary" id="btn-log-tail">Tail (Text)</button>
+                </div>
+                <pre class="tail-output" id="log-tail-output">–</pre>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-close="modal-logging">Schließen</button>
+            <button type="button" class="btn btn-primary" id="btn-log-interval-save">Intervall setzen</button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Live UI ---
+    const readingEl     = document.getElementById('reading');
+    const valueEl       = document.getElementById('reading-value');
+    const unitEl        = document.getElementById('reading-unit');
+    const metaEl        = document.getElementById('reading-meta');
+
+    const badgeAuto     = document.querySelector('.badge-auto');
+    const badgeHold     = document.querySelector('.badge-hold');
+    const badgeRel      = document.querySelector('.badge-rel');
+    const badgeBat      = document.querySelector('.badge-bat');
+
+    const rawEl         = document.getElementById('raw-hex');
+
+    // --- Header pills ---
+    const pillPort = document.getElementById('pill-port');
+    const pillConn = document.getElementById('pill-conn');
+    const modalDevice = document.getElementById('modal-device');
+    const devicePortInput = document.getElementById('device-port-input');
+    const deviceBaudSelect = document.getElementById('device-baud-select');
+    const btnDeviceSave = document.getElementById('btn-device-save');
+
+    // --- Logging UI ---
+    const logStatusPill = document.getElementById('log-status');
+    const logIntervalEl = document.getElementById('log-interval');
+    const logFileEl     = document.getElementById('log-file');
+    const btnLogStart   = document.getElementById('btn-log-start');
+    const btnLogStop    = document.getElementById('btn-log-stop');
+    const btnLogSettings = document.getElementById('btn-log-settings');
+    const modalLogging   = document.getElementById('modal-logging');
+    const logIntervalInput = document.getElementById('log-interval-input');
+    const logFileSelect  = document.getElementById('log-file-select');
+    const btnLogRefresh  = document.getElementById('btn-log-refresh');
+    const btnLogDownload = document.getElementById('btn-log-download');
+    const btnLogTail     = document.getElementById('btn-log-tail');
+    const btnLogIntervalSave = document.getElementById('btn-log-interval-save');
+    const logTailOutput  = document.getElementById('log-tail-output');
+
+    // ===== Reader Status =====
+    const STALE_MS = 3500;
+    let lastReaderStatus = null;
+
+    function setConnPill(state, text) {
+        if (!pillConn) return;
+        pillConn.classList.remove('status-pill-ok', 'status-pill-warn', 'status-pill-bad');
+        if (state === 'ok') pillConn.classList.add('status-pill-ok');
+        else if (state === 'bad') pillConn.classList.add('status-pill-bad');
+        else pillConn.classList.add('status-pill-warn');
+        pillConn.textContent = text;
+    }
+
+    function parseTimeMs(t) {
+        if (!t) return 0;
+        const ms = Date.parse(t);
+        return Number.isFinite(ms) ? ms : 0;
+    }
+
+    async function pollReaderStatus() {
+        try {
+            const res = await fetch('/api/reader/status', { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const st = await res.json();
+            // st: { port, baud, connected, last_frame_at, last_error }
+            lastReaderStatus = st;
+
+            if (pillPort) {
+                const p = (st.port && st.port !== '') ? st.port : '–';
+                const b = (st.baud && st.baud !== 0) ? st.baud : 2400;
+                pillPort.textContent = `Device: ${p} @ ${b}`;
+            }
+
+            if (st.last_error && st.last_error !== '') {
+                setConnPill('bad', 'Fehler');
+                return;
+            }
+
+            const lastMs = parseTimeMs(st.last_frame_at);
+            const age = lastMs ? (Date.now() - lastMs) : Number.POSITIVE_INFINITY;
+
+            if (st.connected && age <= STALE_MS) {
+                setConnPill('ok', 'Verbunden');
+            } else {
+                setConnPill('warn', 'Keine Daten');
+            }
+        } catch (e) {
+            setConnPill('bad', 'Server weg');
+        }
+    }
+
+    // ===== Live Measurement =====
+    function setBadgeState(el, on) {
+        if (!el) return;
+        el.classList.toggle('badge-on',  !!on);
+        el.classList.toggle('badge-off', !on);
+    }
+
+    function updateReading(meas) {
+        if (!meas) return;
+
+        const vStr = meas.value_str ?? '';
+        valueEl.textContent = vStr !== '' ? vStr : '--.--';
+
+        const unit   = (meas.unit || '').trim();
+        const mode   = (meas.mode || '').trim();
+        let unitLabel = unit;
+
+        if (unit === 'V' && mode) unitLabel = 'V' + mode;
+        unitEl.textContent = unitLabel || '';
+
+        readingEl.classList.remove('reading--vdc', 'reading--vac', 'reading--default');
+        const unitUpper = unit.toUpperCase();
+        if (unitUpper === 'V' || unitUpper === 'VDC' || unitUpper === 'VAC') {
+            if (mode.toUpperCase() === 'AC') readingEl.classList.add('reading--vac');
+            else readingEl.classList.add('reading--vdc');
+        } else {
+            readingEl.classList.add('reading--default');
+        }
+
+        metaEl.innerHTML = '';
+        const spanRange = document.createElement('span');
+        spanRange.className = 'tag';
+        spanRange.textContent = meas.auto ? 'Auto Range' : 'Manuelle Range';
+        metaEl.appendChild(spanRange);
+
+        if (mode) {
+            const dot = document.createElement('span');
+            dot.className = 'dot';
+            dot.textContent = '•';
+            metaEl.appendChild(dot);
+
+            const spanMode = document.createElement('span');
+            spanMode.className = 'tag';
+            spanMode.textContent = mode;
+            metaEl.appendChild(spanMode);
+        }
+
+        setBadgeState(badgeAuto, meas.auto);
+        setBadgeState(badgeHold, meas.hold);
+        setBadgeState(badgeRel,  meas.rel);
+
+        if (meas.low_batt) {
+            badgeBat.textContent = 'BAT LOW';
+            badgeBat.classList.remove('badge-ok');
+            badgeBat.classList.add('badge-error');
+        } else {
+            badgeBat.textContent = 'BAT OK';
+            badgeBat.classList.remove('badge-error');
+            badgeBat.classList.add('badge-ok');
+        }
+
+        rawEl.textContent = meas.raw || '--';
+    }
+
+    async function pollLive() {
+        try {
+            const res = await fetch('/api/live', { cache: 'no-store' });
+            if (res.status === 204) return;
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            updateReading(data);
+        } catch (e) {
+            // live kann failen ohne dass der server weg ist -> reader status regelt die conn-pill
+        }
+    }
+
+    // ===== Logging =====
+    function setLogUI(running, intervalMs, filename) {
+        if (!logStatusPill) return;
+
+        logStatusPill.classList.remove('status-pill-ok', 'status-pill-warn', 'status-pill-bad');
+
+        if (running) {
+            logStatusPill.classList.add('status-pill-ok');
+            logStatusPill.textContent = 'läuft';
+        } else {
+            logStatusPill.classList.add('status-pill-warn');
+            logStatusPill.textContent = 'gestoppt';
+        }
+
+        if (intervalMs && intervalMs > 0) {
+            if (intervalMs % 1000 === 0) logIntervalEl.textContent = (intervalMs / 1000) + ' s';
+            else logIntervalEl.textContent = intervalMs + ' ms';
+        } else {
+            logIntervalEl.textContent = '–';
+        }
+
+        logFileEl.textContent = (filename && filename !== '') ? filename : '–';
+
+        if (btnLogStart && btnLogStop) {
+            btnLogStart.disabled = !!running;
+            btnLogStop.disabled  = !running;
+        }
+    }
+
+    async function setDevice(port, baud) {
+        const body = { port, baud };
+        const res = await fetch('/api/device/port', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            throw new Error('HTTP ' + res.status);
+        }
+        await pollReaderStatus();
+    }
+
+    function isModalOpen(el) {
+        return el && el.classList.contains('show');
+    }
+
+    async function refreshLogStatus(fillModalFields = false) {
+        try {
+            const res = await fetch('/api/log/status', { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json(); // {active,file,interval_ms}
+            setLogUI(!!data.active, data.interval_ms, data.file);
+            if (logIntervalInput && fillModalFields) {
+                logIntervalInput.value = data.interval_ms || '';
+            }
+        } catch (e) {
+            setLogUI(false, null, null);
+        }
+    }
+
+    async function startLogging() {
+        try {
+            const res = await fetch('/api/log/start', { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            await refreshLogStatus();
+        } catch (e) {
+            await refreshLogStatus();
+        }
+    }
+
+    async function stopLogging() {
+        try {
+            const res = await fetch('/api/log/stop', { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            await refreshLogStatus();
+        } catch (e) {
+            await refreshLogStatus();
+        }
+    }
+
+    btnLogStart?.addEventListener('click', startLogging);
+    btnLogStop?.addEventListener('click', stopLogging);
+
+    // ===== Modal Helpers =====
+    function openModal(el) {
+        if (!el) return;
+        el.classList.add('show');
+    }
+    function closeModal(el) {
+        if (!el) return;
+        el.classList.remove('show');
+    }
+    document.querySelectorAll('[data-close]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-close');
+            const el = document.getElementById(id);
+            closeModal(el);
+        });
+    });
+
+    // Device modal
+    pillPort?.addEventListener('click', () => {
+        if (devicePortInput && lastReaderStatus) {
+            devicePortInput.value = lastReaderStatus.port || '';
+        }
+        if (deviceBaudSelect && lastReaderStatus) {
+            deviceBaudSelect.value = String(lastReaderStatus.baud || 2400);
+        }
+        openModal(modalDevice);
+    });
+    btnDeviceSave?.addEventListener('click', async () => {
+        const port = (devicePortInput?.value || '').trim();
+        const baud = parseInt(deviceBaudSelect?.value || '2400', 10) || 2400;
+        if (!port) return;
+        try {
+            await setDevice(port, baud);
+            closeModal(modalDevice);
+        } catch (e) {
+            alert('Setzen fehlgeschlagen: ' + e.message);
+        }
+    });
+
+    // Logging modal
+    btnLogSettings?.addEventListener('click', async () => {
+        await refreshLogStatus(true);
+        await refreshLogFiles();
+        openModal(modalLogging);
+    });
+
+    async function refreshLogFiles() {
+        if (!logFileSelect) return;
+        const current = logFileSelect.value;
+        try {
+            const res = await fetch('/api/log/files', { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const files = await res.json();
+            logFileSelect.innerHTML = '';
+            if (Array.isArray(files) && files.length > 0) {
+                files.sort((a, b) => b.localeCompare(a, 'en')); // neueste (lexikalisch) oben
+                for (const f of files) {
+                    const opt = document.createElement('option');
+                    opt.value = f;
+                    opt.textContent = f;
+                    if (current && current === f) {
+                        opt.selected = true;
+                    }
+                    logFileSelect.appendChild(opt);
+                }
+                if (!logFileSelect.value && files.length > 0) {
+                    logFileSelect.value = files[0];
+                }
+            } else {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'keine Dateien';
+                logFileSelect.appendChild(opt);
+            }
+        } catch (e) {
+            console.error('log files', e);
+        }
+    }
+    btnLogRefresh?.addEventListener('click', refreshLogFiles);
+
+    btnLogIntervalSave?.addEventListener('click', async () => {
+        const ms = parseInt(logIntervalInput?.value || '0', 10);
+        try {
+            const res = await fetch('/api/log/interval', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ interval_ms: ms }),
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            await refreshLogStatus(true);
+        } catch (e) {
+            alert('Intervall setzen fehlgeschlagen: ' + e.message);
+        }
+    });
+
+    btnLogDownload?.addEventListener('click', () => {
+        const name = logFileSelect?.value || '';
+        if (!name) return;
+        window.open('/api/log/file?name=' + encodeURIComponent(name), '_blank');
+    });
+    btnLogTail?.addEventListener('click', async () => {
+        const name = logFileSelect?.value || '';
+        if (!name) return;
+        if (logTailOutput) {
+            logTailOutput.textContent = 'Lade…';
+        }
+        try {
+            const res = await fetch('/api/log/tail?name=' + encodeURIComponent(name) + '&lines=200', { cache: 'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const text = await res.text();
+            if (logTailOutput) {
+                logTailOutput.textContent = text || 'keine Daten';
+            }
+        } catch (e) {
+            if (logTailOutput) {
+                logTailOutput.textContent = 'Fehler: ' + e.message;
+            }
+        }
+    });
+
+    // Close modals on backdrop click
+    [modalDevice, modalLogging].forEach(modal => {
+        modal?.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal(modal);
+        });
+    });
+
+    // --- start polling ---
+    pollReaderStatus();
+    setInterval(pollReaderStatus, 700);
+
+    pollLive();
+    setInterval(pollLive, 50);
+
+    refreshLogStatus();
+    setInterval(refreshLogStatus, 1900);
+});
+</script>
+</body>
+</html>
