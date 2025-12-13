@@ -23,7 +23,7 @@ It is **not** meant to be:
 - A closed “end‑user product”
 
 If you own a similar multimeter: **fork it and adapt the decoder**.
-
+If you are a device manufacturer and want to collaborate or provide test hardware, feel free to get in touch.
 ---
 
 ## Highlights
