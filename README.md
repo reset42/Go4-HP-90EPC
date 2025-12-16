@@ -1,4 +1,4 @@
-# Go4-HP-90EPC (v1)
+# Go4-HP-90EPC
 
 Compact HTTP server and Web UI for the **HP‑90EPC serial multimeter**, with live display and CSV logging.  
 Forks and adaptations for other meters are explicitly welcome.
